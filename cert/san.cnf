@@ -1,0 +1,20 @@
+[req]
+default_bits       = 2048
+prompt             = no
+default_md         = sha256
+distinguished_name = dn
+req_extensions     = req_ext
+
+[dn]
+CN = nexus.com
+
+[req_ext]
+subjectAltName = @alt_names
+
+[alt_names]
+IP.1 = 127.0.0.1
+DNS.1 = pypi.org
+DNS.2 = ghcr.io
+DNS.3 = docker.io
+DNS.4 = github.com
+DNS.5 = pkg.go.dev

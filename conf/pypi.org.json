@@ -1,0 +1,7 @@
+{
+  "pypi.org": {
+    "domain": "pypi.org",
+    "regex": "pypi.org",
+    "replace": "anonymous-proxy-py-pypi.org.nexus.com"
+  }
+}

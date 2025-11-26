@@ -1,0 +1,7 @@
+{
+  "deb.debian.org.debian": {
+    "domain": "deb.debian.org",
+    "regex": "http://deb.debian.org/debian/",
+    "replace": "https://nexus/com/repository/anonymous-proxy-ap-bookworm-deb.debian.org_debian/"
+  }
+}
