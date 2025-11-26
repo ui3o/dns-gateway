@@ -1,4 +1,4 @@
-module github.com/ui3o/codebox/reverseproxy
+module github.com/ui3o/dns-gateway
 
 go 1.24.0
 
