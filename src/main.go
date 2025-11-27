@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -28,12 +29,16 @@ var (
 )
 
 var (
-	TermColorReset = "\033[0m"
-	TermColorRed   = "\033[31m"
-	TermColorGreen = "\033[32m"
-	TermColorBlue  = "\033[34m"
+	TermColorReset  = "\033[0m"
+	TermColorRed    = "\033[31m"
+	TermColorGreen  = "\033[32m"
+	TermColorBlue   = "\033[34m"
+	TermColorYellow = "\033[33m"
 )
 
+func yellow(s string) string {
+	return TermColorYellow + s + TermColorReset
+}
 func red(s string) string {
 	return TermColorRed + s + TermColorReset
 }
@@ -109,6 +114,35 @@ func loadConfigs() {
 	}
 }
 
+func generateCerts() {
+
+	runCmd := func(name string, args ...string) error {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = "/etc/dns-gateway/certs/config"
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			logger(red("ERR"), "Command failed:", string(output))
+		}
+		return err
+	}
+	runCmd("make", "gen_ca_cert")
+
+	if err := importCAIntoJKS("/etc/dns-gateway/certs/cacerts/ca.crt", "/etc/dns-gateway/certs/cacerts/keystore.jks", "dns-gateway", "changeit"); err != nil {
+		log.Fatalf(red("ERR"), "Failed to start import ca-cert into keystore.jks: %v", err)
+	}
+
+	if generateNeed, err := compareDNAndAltNames("/etc/dns-gateway/certs/server/server.crt", "/etc/dns-gateway/certs/config/san.cnf"); err != nil {
+		logger(yellow("WRN"), "Failed to read server.crt or san.cnf: %v. Run make gen_server_cert", err)
+		runCmd("make", "gen_server_cert")
+	} else if !generateNeed {
+		logger("INI", "No need to generate new server certificate")
+		return
+	} else {
+		runCmd("make", "gen_server_cert")
+		logger("INI", "Generating new server certificate")
+	}
+}
+
 func init() {
 	flag.CommandLine.Init("env_param_proxygw", flag.ExitOnError)
 
@@ -117,9 +151,9 @@ func init() {
 	flag.IntVar(&Config.DNSPort, "dns_port", 53, "Default: 53")
 	flag.IntVar(&Config.HTTPPort, "http_port", 80, "Default: 80")
 
-	flag.StringVar(&Config.KeyFile, "server_key", "./cert/server.key", "./cert/server.key")
-	flag.StringVar(&Config.CertFile, "server_cert", "./cert/server.crt", "./cert/server.crt")
-	flag.StringVar(&Config.ConfigPath, "configpath", "./conf", "")
+	flag.StringVar(&Config.KeyFile, "server_key", "/etc/dns-gateway/certs/server/server.key", "/etc/dns-gateway/certs/server/server.key")
+	flag.StringVar(&Config.CertFile, "server_cert", "/etc/dns-gateway/certs/server/server.crt", "/etc/dns-gateway/certs/server/server.crt")
+	flag.StringVar(&Config.ConfigPath, "configpath", "/etc/dns-gateway/conf", "")
 	flag.StringVar(&Config.FixIPReplyForDNS, "fix_ip_reply_for_dns", "192.168.9.11", "")
 	flag.StringVar(&Config.OriginalDNSIp, "original_dns_ip", "192.168.9.1", "")
 
@@ -131,6 +165,7 @@ func init() {
 	} else {
 		logger("INI", "RuntimeConfig JSON:", string(confJson))
 	}
+	generateCerts()
 	loadConfigs()
 	for name, route := range AllRoutes {
 		compiled := regexp.MustCompile(route.Regex)
