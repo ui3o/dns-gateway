@@ -23,7 +23,7 @@ type RuntimeConfig struct {
 	HTTPPort         int
 	DNSPort          int
 	FixIPReplyForDNS string
-	OriginalDNSIp    string
+	OriginalDNSIP    string
 	CertFile         string
 	KeyFile          string
 	ConfigPath       string
