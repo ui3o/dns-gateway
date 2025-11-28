@@ -76,9 +76,7 @@ func (p *RouteConfig) createHTTPClient(uri string) (*http.Client, *http.Client) 
 	return client, speedClient
 }
 
-func (p *RouteConfig) createHTTPRequest(url, targetHost string, c *gin.Context) (*http.Request, error) {
-	c.Request.Body = p.logBody("Request", c.Request.Body)
-
+func logRequestHeader(c *gin.Context)  {
 	if Config.DebugLevel > 1 {
 		if err := c.Request.ParseForm(); err != nil {
 			logger("ERR", "ParseForm request failed:", err)
@@ -96,7 +94,11 @@ func (p *RouteConfig) createHTTPRequest(url, targetHost string, c *gin.Context) 
 			logger("REQ", "Request BasicAuth user:", user, "password:", pass)
 		}
 	}
+}
 
+func (p *RouteConfig) createHTTPRequest(url, targetHost string, c *gin.Context) (*http.Request, error) {
+	c.Request.Body = p.logBody("Request", c.Request.Body)
+	logRequestHeader(c)
 	req, err := http.NewRequest(c.Request.Method, url, c.Request.Body)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "Failed to create request: %v", err)
