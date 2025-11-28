@@ -33,7 +33,7 @@ var (
 	TermColorRed    = "\033[31m"
 	TermColorGreen  = "\033[32m"
 	TermColorBlue   = "\033[34m"
-	TermColorYellow = "\033[33m"
+TermColorYellow = "\033[33m"
 )
 
 func yellow(s string) string {
@@ -107,7 +107,9 @@ func loadConfigs() {
 				log.Fatalf(red("ERR"), "Failed to parse routes.json: %v", err)
 			}
 			for _, route := range conf {
-				AllDoamin[route.Domain+"."] = true
+				for _, d := range route.Domains {
+					AllDoamin[d+"."] = true
+				}
 			}
 			maps.Copy(AllRoutes, conf)
 		}
@@ -144,7 +146,7 @@ func generateCerts() {
 }
 
 func init() {
-	flag.CommandLine.Init("env_param_proxygw", flag.ExitOnError)
+	flag.CommandLine.Init("env_param_dns_gateway", flag.ExitOnError)
 
 	flag.IntVar(&Config.DebugLevel, "debug", 0, "Enable debug mode")
 	flag.IntVar(&Config.HTTPSPort, "https_port", 443, "Default: 443")
@@ -182,7 +184,9 @@ func init() {
 }
 
 func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
-	logger("DNS", "[REQ_START] Handle DNS request => |", r.Question, "|")
+	if Config.DebugLevel > 0 {
+		logger("DNS", "[REQ_START] Handle DNS request => |", r.Question, "|")
+	}
 	override := false
 	msg := dns.Msg{}
 	msg.SetReply(r)
@@ -190,6 +194,9 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	for _, q := range r.Question {
 		if q.Qtype == dns.TypeA {
 			if _, exists := AllDoamin[q.Name]; exists {
+				if Config.DebugLevel < 1 {
+					logger("DNS", "[REQ_START] Handle DNS request => |", r.Question, "|")
+				}
 				rr := &dns.A{
 					Hdr: dns.RR_Header{
 						Name:   q.Name,

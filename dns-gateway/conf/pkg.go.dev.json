@@ -1,6 +1,6 @@
 {
   "pkg.go.dev": {
-    "domain": "pkg.go.dev",
+    "domains": ["pkg.go.dev"],
     "regex": "pkg.go.dev",
     "replace": "anonymous-proxy-go-proxy.golang.org.nexus.com"
   }

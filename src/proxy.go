@@ -37,8 +37,9 @@ type RegexConfig struct {
 
 type RouteConfig struct {
 	RegexConfig
+	Proxy   string
 	Address string
-	Domain  string
+	Domains []string
 	Timeout int
 	Headers map[string]RegexConfig
 }
@@ -76,6 +77,26 @@ func (p *RouteConfig) createHTTPClient(uri string) (*http.Client, *http.Client) 
 }
 
 func (p *RouteConfig) createHTTPRequest(url, targetHost string, c *gin.Context) (*http.Request, error) {
+	c.Request.Body = p.logBody("Request", c.Request.Body)
+
+	if Config.DebugLevel > 1 {
+		if err := c.Request.ParseForm(); err != nil {
+			logger("ERR", "ParseForm request failed:", err)
+		} else {
+			logger("REQ", "Request Form is: ", c.Request.Form)
+		}
+		if err := c.Request.ParseMultipartForm(4096); err != nil {
+			logger("ERR", "ParseMultipartForm request failed:", err)
+		} else {
+			logger("REQ", "Request MultipartForm is: ", c.Request.MultipartForm)
+		}
+
+		user, pass, hasAuth := c.Request.BasicAuth()
+		if hasAuth {
+			logger("REQ", "Request BasicAuth user:", user, "password:", pass)
+		}
+	}
+
 	req, err := http.NewRequest(c.Request.Method, url, c.Request.Body)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "Failed to create request: %v", err)
@@ -93,21 +114,22 @@ func (p *RouteConfig) createHTTPRequest(url, targetHost string, c *gin.Context) 
 			logger("REQ", "Forwarding header to backend:", k, ":", v)
 		}
 	}
+
 	return req, nil
 }
 
-func (p *RouteConfig) logTargetResponseBody(respBody io.ReadCloser) io.ReadCloser {
-	if Config.DebugLevel > 1 {
-		bodyBytes, err := io.ReadAll(respBody)
+func (p *RouteConfig) logBody(target string, body io.ReadCloser) io.ReadCloser {
+	if Config.DebugLevel > 1 && body != nil {
+		bodyBytes, err := io.ReadAll(body)
 		if err != nil {
 			logger("ERR", "Failed to read response body:", err)
 		} else {
-			logger("REQ", "Response body:", string(bodyBytes))
+			logger("REQ", target, " body: ", string(bodyBytes))
 			// Reset resp.Body so it can be copied to the client
-			respBody = io.NopCloser(strings.NewReader(string(bodyBytes)))
+			body = io.NopCloser(strings.NewReader(string(bodyBytes)))
 		}
 	}
-	return respBody
+	return body
 }
 
 func (p *RouteConfig) serveHTTPRequest(url, targetHost string, c *gin.Context) {
@@ -142,7 +164,7 @@ func (p *RouteConfig) serveHTTPRequest(url, targetHost string, c *gin.Context) {
 	}
 	c.Status(resp.StatusCode)
 	logger("REQ", "Received response code from backend:", resp.StatusCode)
-	resp.Body = p.logTargetResponseBody(resp.Body)
+	resp.Body = p.logBody("Response", resp.Body)
 	// Copy body
 	io.Copy(c.Writer, resp.Body)
 }
@@ -237,6 +259,10 @@ func HandleRequest(c *gin.Context) {
 		if route.CompiledRegex.FindString(sourceUrl) != "" {
 			found = true
 			logger("REQ", "HandleRequest found route for id:", k)
+			if AllRoutes[k].Proxy != "" {
+				AllRoutes[k].serveHTTPRequestViaProxy(targetUrl, targetHost, AllRoutes[k].Proxy, c)
+				return
+			}
 			AllRoutes[k].StartServeProxy(targetUrl, targetHost, c)
 			return
 		}
@@ -276,4 +302,51 @@ func HandleCONNECT(w http.ResponseWriter, r *http.Request) {
 	// Start proxying data between the client and the target server
 	go io.Copy(targetConn, conn)
 	io.Copy(conn, targetConn)
+}
+
+func (p *RouteConfig) createProxiedHTTPClient(proxyAddr string) *http.Client {
+	proxyURL, err := url.Parse(proxyAddr)
+	if err != nil {
+		logger("ERR", "Failed to parse proxy address:", err)
+		return http.DefaultClient
+	}
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(proxyURL),
+	}
+	if strings.HasPrefix(proxyAddr, "https") {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   time.Duration(p.Timeout) * time.Second,
+	}
+}
+
+// Usage: p.serveHTTPRequestViaProxy(url, targetHost, proxyAddr, c)
+func (p *RouteConfig) serveHTTPRequestViaProxy(url, targetHost, proxyAddr string, c *gin.Context) {
+	client := p.createProxiedHTTPClient(proxyAddr)
+	logger("REQ", "Send a backend request via proxy:", url, "proxy:", proxyAddr)
+	req, err := p.createHTTPRequest(url, targetHost, c)
+	if err != nil {
+		return
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger("ERR", "Failed to reach backend via proxy:", err)
+		c.String(http.StatusBadGateway, "Failed to reach backend via proxy: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	for k, v := range resp.Header {
+		for _, vv := range v {
+			if k != "Connection" && k != "Keep-Alive" {
+				c.Writer.Header().Add(k, strings.ReplaceAll(vv, c.Request.RemoteAddr, targetHost))
+			}
+		}
+	}
+	c.Status(resp.StatusCode)
+	resp.Body = p.logBody("Response", resp.Body)
+	io.Copy(c.Writer, resp.Body)
 }
