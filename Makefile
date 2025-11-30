@@ -11,8 +11,10 @@ setup-github-workspace:
 build:
 	podman build -t dns-gateway:latest .
 
-run:
+build-go:
 	cd src && GOOS=linux go build -o dns-gateway .
+
+run:
 	podman kill local-dns-gateway || true
 	podman create --rm --name local-dns-gateway docker.io/ui3o/dns-gateway:latest
 	podman cp dns-gateway local-dns-gateway:/etc/dns-gateway
