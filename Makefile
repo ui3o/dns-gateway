@@ -12,4 +12,9 @@ build:
 	podman build -t dns-gateway:latest .
 
 run:
-	podman run -it localhost/dns-gateway:latest
+	cd src && GOOS=linux go build -o dns-gateway .
+	podman kill local-dns-gateway || true
+	podman create --rm --name local-dns-gateway docker.io/ui3o/dns-gateway:latest
+	podman cp dns-gateway local-dns-gateway:/etc/dns-gateway
+	podman cp src/dns-gateway local-dns-gateway:/opt/dns-gateway/dns-gateway
+	podman start -ia local-dns-gateway

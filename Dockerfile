@@ -4,7 +4,7 @@ COPY ./src /app/src
 WORKDIR /app/src
 RUN GOOS=linux go build -o dns-gateway .
 
-FROM docker.io/fedora:latest
+FROM docker.io/fedora:43
 
 RUN dnf upgrade -y && dnf install -y python3 make openssl
 
