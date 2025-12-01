@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -22,9 +23,20 @@ import (
 	"go.senan.xyz/flagconf"
 )
 
+const (
+	DNS_GEATEWAY_CONFIG = "/etc/dns-gateway/conf"
+	CERT_DIR            = "/etc/dns-gateway/certs"
+	CERT_CONFIG         = CERT_DIR + "/config"
+	CERT_SAN            = CERT_CONFIG + "/san.cnf"
+	CERT_CA             = CERT_DIR + "/cacerts/ca.crt"
+	CERT_CA_KEYSTORE    = CERT_DIR + "/cacerts/keystore.jks"
+	SERVER_CRT          = CERT_DIR + "/certs/server/server.crt"
+	SERVER_KEY          = CERT_DIR + "/certs/server/server.key"
+)
+
 var (
 	AllRoutes = make(map[string]*RouteConfig)
-	AllDoamin = make(map[string]bool)
+	AllDoamin = make(map[string][]string)
 	Config    = RuntimeConfig{}
 )
 
@@ -33,7 +45,7 @@ var (
 	TermColorRed    = "\033[31m"
 	TermColorGreen  = "\033[32m"
 	TermColorBlue   = "\033[34m"
-TermColorYellow = "\033[33m"
+	TermColorYellow = "\033[33m"
 )
 
 func yellow(s string) string {
@@ -92,7 +104,7 @@ func dnsRequestForIP(url *url.URL, port string) string {
 func initAllDomians(conf map[string]*RouteConfig) {
 	for _, route := range conf {
 		for _, d := range route.Domains {
-			AllDoamin[d+"."] = true
+			AllDoamin[d+"."] = slices.Concat(AllDoamin[d+"."], route.Whitelist)
 		}
 	}
 	maps.Copy(AllRoutes, conf)
@@ -115,8 +127,7 @@ func loadConfigs() {
 			if err := json.Unmarshal(routesData, &conf); err != nil {
 				log.Fatalf(red("ERR"), "Failed to parse routes.json: %v", err)
 			}
-						initAllDomians(conf)
-
+			initAllDomians(conf)
 		}
 	}
 }
@@ -125,7 +136,7 @@ func generateCerts() {
 
 	runCmd := func(name string, args ...string) error {
 		cmd := exec.Command(name, args...)
-		cmd.Dir = "/etc/dns-gateway/certs/config"
+		cmd.Dir = CERT_CONFIG
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			logger(red("ERR"), "Command failed:", string(output))
@@ -134,11 +145,11 @@ func generateCerts() {
 	}
 	runCmd("make", "gen_ca_cert")
 
-	if err := importCAIntoJKS("/etc/dns-gateway/certs/cacerts/ca.crt", "/etc/dns-gateway/certs/cacerts/keystore.jks", "dns-gateway", "changeit"); err != nil {
+	if err := importCAIntoJKS(CERT_CA, CERT_CA_KEYSTORE, "dns-gateway", "changeit"); err != nil {
 		log.Fatalf(red("ERR"), "Failed to start import ca-cert into keystore.jks: %v", err)
-		}
+	}
 
-	if generateNeed, err := compareDNAndAltNames("/etc/dns-gateway/certs/server/server.crt", "/etc/dns-gateway/certs/config/san.cnf"); err != nil {
+	if generateNeed, err := compareDNAndAltNames(SERVER_CRT, CERT_SAN); err != nil {
 		logger(yellow("WRN"), "Failed to read server.crt or san.cnf: %v. Run make gen_server_cert", err)
 		runCmd("make", "gen_server_cert")
 	} else if !generateNeed {
@@ -158,9 +169,9 @@ func init() {
 	flag.IntVar(&Config.DNSPort, "dns_port", 53, "Default: 53")
 	flag.IntVar(&Config.HTTPPort, "http_port", 80, "Default: 80")
 
-	flag.StringVar(&Config.KeyFile, "server_key", "/etc/dns-gateway/certs/server/server.key", "/etc/dns-gateway/certs/server/server.key")
-	flag.StringVar(&Config.CertFile, "server_cert", "/etc/dns-gateway/certs/server/server.crt", "/etc/dns-gateway/certs/server/server.crt")
-	flag.StringVar(&Config.ConfigPath, "configpath", "/etc/dns-gateway/conf", "")
+	flag.StringVar(&Config.KeyFile, "server_key", SERVER_KEY, SERVER_KEY)
+	flag.StringVar(&Config.CertFile, "server_cert", SERVER_CRT, SERVER_CRT)
+	flag.StringVar(&Config.ConfigPath, "configpath", DNS_GEATEWAY_CONFIG, "")
 	flag.StringVar(&Config.FixIPReplyForDNS, "fix_ip_reply_for_dns", "", "")
 	flag.StringVar(&Config.OriginalDNSIP, "original_dns_ip", "", "")
 
@@ -203,7 +214,7 @@ func findIP(addrs []net.Addr, subnet string) (ip string) {
 	return ip
 }
 
-func findIPForDNSandOriginalDns(w dns.ResponseWriter) (fixIPReplyForDNS string, originalDNSIp string) {
+func findIPForDNSandOriginalDns(w dns.ResponseWriter) (remoteNames []string, fixIPReplyForDNS string, originalDNSIp string) {
 	remoteAddr := w.RemoteAddr().String()
 	ip, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
@@ -225,7 +236,23 @@ func findIPForDNSandOriginalDns(w dns.ResponseWriter) (fixIPReplyForDNS string, 
 	if Config.OriginalDNSIP != "" {
 		dnsIP = Config.OriginalDNSIP
 	}
-	return fixIPReplyForDNS, dnsIP
+	names, err := net.LookupAddr(ip)
+	if err != nil {
+		logger(red("ERR"), "Reverse lookup failed:", err)
+	}
+	return names, fixIPReplyForDNS, dnsIP
+}
+
+func needToHandleDNSOverride(domain string, remoteNames []string) bool {
+	if r, exists := AllDoamin[domain]; exists {
+		for _, rn := range remoteNames {
+			if slices.Contains(r, rn) {
+				return true
+			}
+		}
+		return len(r) == 0
+	}
+	return false
 }
 
 func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
@@ -236,11 +263,11 @@ func handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	msg := dns.Msg{}
 	msg.SetReply(r)
 
-	fixIPReplyForDNS, dnsIP := findIPForDNSandOriginalDns(w)
+	remoteNames, fixIPReplyForDNS, dnsIP := findIPForDNSandOriginalDns(w)
 
 	for _, q := range r.Question {
 		if q.Qtype == dns.TypeA {
-			if _, exists := AllDoamin[q.Name]; exists {
+			if needToHandleDNSOverride(q.Name, remoteNames) {
 				if Config.DebugLevel < 1 {
 					logger("DNS", "[REQ_START] Handle DNS request => |", r.Question, "|")
 				}

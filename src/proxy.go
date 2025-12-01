@@ -37,11 +37,12 @@ type RegexConfig struct {
 
 type RouteConfig struct {
 	RegexConfig
-	Proxy   string
-	Address string
-	Domains []string
-	Timeout int
-	Headers map[string]RegexConfig
+	Proxy     string
+	Address   string
+	Domains   []string
+	Whitelist []string
+	Timeout   int
+	Headers   map[string]RegexConfig
 }
 
 func (p *RouteConfig) createHTTPClient(uri string) (*http.Client, *http.Client) {
@@ -76,7 +77,7 @@ func (p *RouteConfig) createHTTPClient(uri string) (*http.Client, *http.Client) 
 	return client, speedClient
 }
 
-func logRequestHeader(c *gin.Context)  {
+func logRequestHeader(c *gin.Context) {
 	if Config.DebugLevel > 1 {
 		if err := c.Request.ParseForm(); err != nil {
 			logger("ERR", "ParseForm request failed:", err)
