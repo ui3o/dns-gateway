@@ -30,8 +30,8 @@ const (
 	CERT_SAN            = CERT_CONFIG + "/san.cnf"
 	CERT_CA             = CERT_DIR + "/cacerts/ca.crt"
 	CERT_CA_KEYSTORE    = CERT_DIR + "/cacerts/keystore.jks"
-	SERVER_CRT          = CERT_DIR + "/certs/server/server.crt"
-	SERVER_KEY          = CERT_DIR + "/certs/server/server.key"
+	SERVER_CRT          = CERT_DIR + "/server/server.crt"
+	SERVER_KEY          = CERT_DIR + "/server/server.key"
 )
 
 var (
