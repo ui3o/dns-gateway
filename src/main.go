@@ -235,6 +235,8 @@ func findIPForDNSandOriginalDns(w dns.ResponseWriter) (remoteNames []string, fix
 	dnsIP := subnet + ".1"
 	if Config.OriginalDNSIP != "" {
 		dnsIP = Config.OriginalDNSIP
+	} else {
+		Config.OriginalDNSIP = dnsIP
 	}
 	names, err := net.LookupAddr(ip)
 	if err != nil {
